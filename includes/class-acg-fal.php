@@ -25,6 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class ACG_Fal {
 
 	const API_BASE         = 'https://api.fal.ai/v1';
+	const QUEUE_BASE       = 'https://queue.fal.run';
 	const MODELS_CACHE_KEY = 'acg_models_t2i';
 	const MODELS_CACHE_TTL = 12 * HOUR_IN_SECONDS;
 	const MAX_PAGES        = 6; // Safety cap on pagination.
@@ -226,6 +227,173 @@ class ACG_Fal {
 
 	public static function clear_models_cache() {
 		delete_transient( self::MODELS_CACHE_KEY );
+	}
+
+	/**
+	 * Submit a generation request to the fal queue.
+	 *
+	 * @return array{ok:bool, request_id:string, status_url:string, response_url:string, error:string|null}
+	 */
+	public static function submit( $model, array $input ) {
+		$model = trim( (string) $model );
+		if ( '' === $model ) {
+			return array( 'ok' => false, 'request_id' => '', 'status_url' => '', 'response_url' => '', 'error' => 'No model selected.' );
+		}
+
+		$url = self::QUEUE_BASE . '/' . ltrim( $model, '/' );
+		$r   = self::request(
+			'POST',
+			$url,
+			array(
+				'headers' => array( 'Content-Type' => 'application/json' ),
+				'body'    => wp_json_encode( $input ),
+			)
+		);
+
+		if ( 200 !== $r['code'] && 201 !== $r['code'] ) {
+			return array( 'ok' => false, 'request_id' => '', 'status_url' => '', 'response_url' => '', 'error' => $r['error'] ? $r['error'] : 'Submit failed.' );
+		}
+
+		$b = is_array( $r['body'] ) ? $r['body'] : array();
+		return array(
+			'ok'           => ! empty( $b['request_id'] ),
+			'request_id'   => isset( $b['request_id'] ) ? (string) $b['request_id'] : '',
+			'status_url'   => isset( $b['status_url'] ) ? (string) $b['status_url'] : '',
+			'response_url' => isset( $b['response_url'] ) ? (string) $b['response_url'] : '',
+			'error'        => empty( $b['request_id'] ) ? 'No request_id in the fal response.' : null,
+		);
+	}
+
+	/**
+	 * Poll a queued request to completion, then fetch and parse the image URL.
+	 * Uses the status_url / response_url returned by submit (do not reconstruct).
+	 *
+	 * @return array{ok:bool, image_url:string, status:string, error:string|null}
+	 */
+	public static function poll_result( $status_url, $response_url, $timeout = 90, $interval = 2 ) {
+		if ( '' === (string) $status_url || '' === (string) $response_url ) {
+			return array( 'ok' => false, 'image_url' => '', 'status' => '', 'error' => 'Missing queue URLs.' );
+		}
+
+		$deadline = time() + (int) $timeout;
+		$status   = '';
+
+		while ( true ) {
+			$s = self::request( 'GET', $status_url );
+			if ( 200 !== $s['code'] || ! is_array( $s['body'] ) ) {
+				return array( 'ok' => false, 'image_url' => '', 'status' => $status, 'error' => $s['error'] ? $s['error'] : 'Status check failed.' );
+			}
+
+			$status = isset( $s['body']['status'] ) ? (string) $s['body']['status'] : '';
+
+			if ( 'COMPLETED' === $status ) {
+				break;
+			}
+			if ( in_array( $status, array( 'ERROR', 'FAILED', 'CANCELLED' ), true ) ) {
+				return array( 'ok' => false, 'image_url' => '', 'status' => $status, 'error' => 'fal request ' . strtolower( $status ) . '.' );
+			}
+			if ( time() >= $deadline ) {
+				return array( 'ok' => false, 'image_url' => '', 'status' => $status, 'error' => 'Timed out waiting for fal (' . (int) $timeout . 's).' );
+			}
+
+			sleep( max( 1, (int) $interval ) );
+		}
+
+		$res = self::request( 'GET', $response_url );
+		if ( 200 !== $res['code'] || ! is_array( $res['body'] ) ) {
+			return array( 'ok' => false, 'image_url' => '', 'status' => $status, 'error' => $res['error'] ? $res['error'] : 'Could not fetch the result.' );
+		}
+
+		$image_url = self::extract_image_url( $res['body'] );
+		if ( '' === $image_url ) {
+			return array( 'ok' => false, 'image_url' => '', 'status' => $status, 'error' => 'No image URL in the fal result.' );
+		}
+
+		return array( 'ok' => true, 'image_url' => $image_url, 'status' => $status, 'error' => null );
+	}
+
+	/**
+	 * Defensively pull the first image URL from a fal result. Handles the standard
+	 * images[] shape plus image{}, a bare url, and output/data/response envelopes.
+	 */
+	public static function extract_image_url( $body ) {
+		if ( ! is_array( $body ) ) {
+			return '';
+		}
+
+		foreach ( array( 'output', 'data', 'response' ) as $wrap ) {
+			if ( isset( $body[ $wrap ] ) && is_array( $body[ $wrap ] ) ) {
+				$inner = self::extract_image_url( $body[ $wrap ] );
+				if ( '' !== $inner ) {
+					return $inner;
+				}
+			}
+		}
+
+		if ( ! empty( $body['images'] ) && is_array( $body['images'] ) ) {
+			$first = reset( $body['images'] );
+			if ( is_array( $first ) && ! empty( $first['url'] ) ) {
+				return (string) $first['url'];
+			}
+			if ( is_string( $first ) && '' !== $first ) {
+				return $first;
+			}
+		}
+
+		if ( ! empty( $body['image'] ) ) {
+			if ( is_array( $body['image'] ) && ! empty( $body['image']['url'] ) ) {
+				return (string) $body['image']['url'];
+			}
+			if ( is_string( $body['image'] ) ) {
+				return $body['image'];
+			}
+		}
+
+		if ( ! empty( $body['url'] ) && is_string( $body['url'] ) ) {
+			return $body['url'];
+		}
+
+		return '';
+	}
+
+	/**
+	 * High-level: submit a prompt and return the generated image URL.
+	 *
+	 * @param string $prompt The filled prompt text.
+	 * @param array  $opts   Optional: model, image_size, input (extra fal params), timeout.
+	 * @return array{ok:bool, image_url:string, error:string|null}
+	 */
+	public static function generate_image( $prompt, array $opts = array() ) {
+		$prompt = trim( (string) $prompt );
+		if ( '' === $prompt ) {
+			return array( 'ok' => false, 'image_url' => '', 'error' => 'Empty prompt.' );
+		}
+
+		$o     = ACG_Settings::get();
+		$model = isset( $opts['model'] ) ? $opts['model'] : $o['model'];
+
+		$input = array(
+			'prompt'     => $prompt,
+			'image_size' => isset( $opts['image_size'] ) ? $opts['image_size'] : $o['image_size'],
+			'num_images' => 1,
+		);
+		if ( isset( $opts['input'] ) && is_array( $opts['input'] ) ) {
+			$input = array_merge( $input, $opts['input'] );
+		}
+
+		$sub = self::submit( $model, $input );
+		if ( empty( $sub['ok'] ) ) {
+			return array( 'ok' => false, 'image_url' => '', 'error' => $sub['error'] );
+		}
+
+		$timeout = isset( $opts['timeout'] ) ? (int) $opts['timeout'] : 90;
+		$res     = self::poll_result( $sub['status_url'], $sub['response_url'], $timeout );
+
+		return array(
+			'ok'        => ! empty( $res['ok'] ),
+			'image_url' => isset( $res['image_url'] ) ? $res['image_url'] : '',
+			'error'     => isset( $res['error'] ) ? $res['error'] : null,
+		);
 	}
 
 	/**

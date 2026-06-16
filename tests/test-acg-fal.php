@@ -29,6 +29,14 @@ function get_transient( $k ) { return isset( $GLOBALS['__transients'][ $k ] ) ? 
 function set_transient( $k, $v, $ttl = 0 ) { $GLOBALS['__transients'][ $k ] = $v; return true; }
 function delete_transient( $k ) { unset( $GLOBALS['__transients'][ $k ] ); return true; }
 
+function wp_json_encode( $d ) { return json_encode( $d ); }
+
+// Stubs used by ACG_Generator::build_cover_vars().
+function get_the_title( $id ) { return 'Is Accra a Good Place to Invest?'; }
+function get_the_category( $id ) { $c = new stdClass(); $c->name = 'Real Estate Market Ghana'; return array( $c ); }
+function get_bloginfo( $k ) { return 'Imaani Homes'; }
+function apply_filters( $tag, $val ) { return $val; }
+
 function wp_remote_request( $url, $args = array() ) {
 	$GLOBALS['__http_calls'][] = $url;
 	$GLOBALS['__http_args'][]  = $args;
@@ -50,6 +58,8 @@ class ACG_Settings {
 }
 
 require __DIR__ . '/../includes/class-acg-fal.php';
+require __DIR__ . '/../includes/class-acg-prompts.php';
+require __DIR__ . '/../includes/class-acg-generator.php';
 
 // ---- tiny assert harness ----
 $fail = 0;
@@ -168,6 +178,81 @@ reset_http();
 $GLOBALS['__http_queue'] = array( array( 'wp_error' => 'cURL timeout' ) );
 $tkErr = ACG_Fal::test_key( 'TESTKEY' );
 ok( false === $tkErr['ok'] && strpos( $tkErr['message'], 'cURL timeout' ) !== false, 'transport error surfaces the WP_Error message' );
+
+// ===== 9) submit: POST to queue, parse request_id/status_url/response_url =====
+reset_http();
+$GLOBALS['__http_queue'] = array( array( 'code' => 200, 'body' => json_encode( array(
+	'status'       => 'IN_QUEUE',
+	'request_id'   => 'req-1',
+	'response_url' => 'https://queue.fal.run/fal-ai/flux/dev/requests/req-1',
+	'status_url'   => 'https://queue.fal.run/fal-ai/flux/dev/requests/req-1/status',
+) ) ) );
+$sub = ACG_Fal::submit( 'fal-ai/flux/dev', array( 'prompt' => 'hello', 'image_size' => 'landscape_16_9' ) );
+ok( true === $sub['ok'] && 'req-1' === $sub['request_id'], 'submit parses request_id' );
+ok( '' !== $sub['status_url'] && '' !== $sub['response_url'], 'submit captures status_url and response_url' );
+$su = $GLOBALS['__http_calls'][0];
+$sa = $GLOBALS['__http_args'][0];
+ok( 'https://queue.fal.run/fal-ai/flux/dev' === $su, 'submit POSTs to queue.fal.run/{model}' );
+ok( 'POST' === $sa['method'] && isset( $sa['headers']['Content-Type'] ) && 'application/json' === $sa['headers']['Content-Type'], 'submit sends POST with JSON content-type' );
+ok( strpos( (string) $sa['body'], '"prompt"' ) !== false, 'submit body carries the prompt' );
+
+// ===== 10) poll happy path: COMPLETED then images[].url =====
+reset_http();
+$GLOBALS['__http_queue'] = array(
+	array( 'code' => 200, 'body' => json_encode( array( 'status' => 'COMPLETED' ) ) ),
+	array( 'code' => 200, 'body' => json_encode( array( 'images' => array( array( 'url' => 'https://cdn.fal/img.jpg', 'width' => 1280 ) ) ) ) ),
+);
+$pl = ACG_Fal::poll_result( 'https://q/status', 'https://q/result', 5, 1 );
+ok( true === $pl['ok'] && 'https://cdn.fal/img.jpg' === $pl['image_url'], 'poll returns image url on COMPLETED' );
+ok( count( $GLOBALS['__http_calls'] ) === 2, 'poll makes 1 status + 1 result call' );
+
+// ===== 11) poll error status =====
+reset_http();
+$GLOBALS['__http_queue'] = array( array( 'code' => 200, 'body' => json_encode( array( 'status' => 'ERROR' ) ) ) );
+$pe = ACG_Fal::poll_result( 'https://q/status', 'https://q/result', 5, 1 );
+ok( false === $pe['ok'] && strpos( $pe['error'], 'error' ) !== false, 'poll surfaces an ERROR status' );
+
+// ===== 12) poll timeout (timeout=0, IN_PROGRESS -> immediate timeout, no sleep) =====
+reset_http();
+$GLOBALS['__http_queue'] = array( array( 'code' => 200, 'body' => json_encode( array( 'status' => 'IN_PROGRESS' ) ) ) );
+$pt = ACG_Fal::poll_result( 'https://q/status', 'https://q/result', 0, 1 );
+ok( false === $pt['ok'] && strpos( $pt['error'], 'Timed out' ) !== false, 'poll times out cleanly' );
+
+// ===== 13) extract_image_url across shapes =====
+ok( 'A' === ACG_Fal::extract_image_url( array( 'images' => array( array( 'url' => 'A' ) ) ) ), 'extract: images[].url' );
+ok( 'B' === ACG_Fal::extract_image_url( array( 'images' => array( 'B' ) ) ), 'extract: images[] string' );
+ok( 'C' === ACG_Fal::extract_image_url( array( 'image' => array( 'url' => 'C' ) ) ), 'extract: image.url' );
+ok( 'D' === ACG_Fal::extract_image_url( array( 'output' => array( 'images' => array( array( 'url' => 'D' ) ) ) ) ), 'extract: output envelope' );
+ok( 'E' === ACG_Fal::extract_image_url( array( 'url' => 'E' ) ), 'extract: top-level url' );
+ok( '' === ACG_Fal::extract_image_url( array( 'foo' => 'bar' ) ), 'extract: none -> empty string' );
+
+// ===== 14) generate_image end-to-end (submit -> poll -> result) =====
+reset_http();
+$GLOBALS['__http_queue'] = array(
+	array( 'code' => 200, 'body' => json_encode( array( 'status' => 'IN_QUEUE', 'request_id' => 'r2', 'status_url' => 'https://q/s', 'response_url' => 'https://q/r' ) ) ),
+	array( 'code' => 200, 'body' => json_encode( array( 'status' => 'COMPLETED' ) ) ),
+	array( 'code' => 200, 'body' => json_encode( array( 'images' => array( array( 'url' => 'https://cdn.fal/final.jpg' ) ) ) ) ),
+);
+$gi = ACG_Fal::generate_image( 'a luxury apartment', array( 'model' => 'fal-ai/flux/dev', 'image_size' => 'landscape_16_9', 'timeout' => 5 ) );
+ok( true === $gi['ok'] && 'https://cdn.fal/final.jpg' === $gi['image_url'], 'generate_image runs submit -> poll -> result' );
+
+// ===== 15) generate_image rejects an empty prompt without HTTP =====
+reset_http();
+$ge = ACG_Fal::generate_image( '   ' );
+ok( false === $ge['ok'] && count( $GLOBALS['__http_calls'] ) === 0, 'generate_image rejects an empty prompt with no HTTP call' );
+
+// ===== 16) submit failure (401) =====
+reset_http();
+$GLOBALS['__http_queue'] = array( array( 'code' => 401, 'body' => json_encode( array( 'detail' => 'bad key' ) ) ) );
+$sf = ACG_Fal::submit( 'fal-ai/flux/dev', array( 'prompt' => 'x' ) );
+ok( false === $sf['ok'] && strpos( $sf['error'], 'Unauthorized' ) !== false, 'submit surfaces a 401' );
+
+// ===== 17) generator prompt construction: vars filled, no leftover placeholders =====
+$vars = ACG_Generator::build_cover_vars( 123 );
+ok( 'Is Accra a Good Place to Invest?' === $vars['title'] && 'Imaani Homes' === $vars['site_name'] && 'Real Estate Market Ghana' === $vars['category'], 'build_cover_vars pulls title, site and category' );
+$prompt = ACG_Prompts::render( ACG_Prompts::COVER_SCENE, $vars );
+ok( strpos( $prompt, '{' ) === false, 'rendered cover prompt has no leftover {placeholders}' );
+ok( strpos( $prompt, $vars['property_scene'] ) !== false && strpos( $prompt, $vars['location'] ) !== false, 'rendered prompt contains the scene and location' );
 
 echo "\n" . ( $fail === 0 ? "ALL TESTS PASSED" : ( $fail . " TEST(S) FAILED" ) ) . "\n";
 exit( $fail === 0 ? 0 : 1 );
