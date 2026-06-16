@@ -24,8 +24,8 @@ The scene is described by editable **prompt templates** with placeholder variabl
 
 ## Build status (sprints)
 
-- **P0 (this commit):** scaffold, settings, diagnostics, prompt library. Done.
-- **P1:** fal client + live model dropdown + key test.
+- **P0:** scaffold, settings, diagnostics, prompt library. Done.
+- **P1 (this commit):** fal client + live model dropdown + key test. Done.
 - **P2:** generate + download from the editor button (template -> prompt -> fal -> temp file).
 - **P3:** compress (Imagick/GD, resize, WebP/JPEG) + `media_handle_sideload` + `set_post_thumbnail`; Path 1 code overlay.
 - **P4:** regenerate, posts-list row action, the extra in-article images.
