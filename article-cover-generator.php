@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Article Cover Generator
  * Description:        One-click AI cover and in-article images for posts, powered by fal.ai. Generates a brand-consistent cover (and optional extra images), compresses to WebP, and sets the featured image.
- * Version:           0.3.0
+ * Version:           0.3.1
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * License:           GPL-2.0-or-later
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ACG_VERSION', '0.3.0' );
+define( 'ACG_VERSION', '0.3.1' );
 define( 'ACG_FILE', __FILE__ );
 define( 'ACG_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ACG_URL', plugin_dir_url( __FILE__ ) );

@@ -31,6 +31,15 @@ The scene is described by editable **prompt templates** with placeholder variabl
 - **P4:** regenerate, posts-list row action, the extra in-article images.
 - **P5:** error/rate handling, orphan cleanup, cache purge, docs.
 
+## Prompt aesthetic (0.3.1)
+
+The default cover and extra-image scene prompts direct the model toward an
+affluent, professional, aspirational look: well-dressed, confident, successful
+people in clean, modern, upscale surroundings, with a warm, rich, premium palette.
+They explicitly steer away from poor, run-down, dated or low-income looking
+imagery. Existing installs keep their saved prompts; reset in Settings or edit the
+Cover/Extra prompt fields to adopt the new defaults.
+
 ## License
 
 GPL-2.0-or-later.
