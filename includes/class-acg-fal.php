@@ -373,9 +373,10 @@ class ACG_Fal {
 		$model = isset( $opts['model'] ) ? $opts['model'] : $o['model'];
 
 		$input = array(
-			'prompt'     => $prompt,
-			'image_size' => isset( $opts['image_size'] ) ? $opts['image_size'] : $o['image_size'],
-			'num_images' => 1,
+			'prompt'          => $prompt,
+			'negative_prompt' => class_exists( 'ACG_Prompts' ) ? ACG_Prompts::NEGATIVE_PROMPT : '',
+			'image_size'      => isset( $opts['image_size'] ) ? $opts['image_size'] : $o['image_size'],
+			'num_images'      => 1,
 		);
 		if ( isset( $opts['input'] ) && is_array( $opts['input'] ) ) {
 			$input = array_merge( $input, $opts['input'] );
