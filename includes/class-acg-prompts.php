@@ -24,9 +24,14 @@ class ACG_Prompts {
 	const DEFAULT_SECTION_SUBJECT = 'a stylish, successful professional in a clean, modern, high-end urban environment with contemporary buildings';
 	const DEFAULT_LOCATION        = 'modern, upscale Accra, Ghana: a contemporary African city with glass office towers, sleek new apartment blocks, paved streets, manicured landscaping and a bright skyline, in the style of prosperous districts like Airport Residential Area, Cantonments, Ridge or East Legon';
 
+	/** Style enforcer: force-appended to EVERY rendered prompt in the generator, so the
+	    modern look is guaranteed even when an install still has an older prompt saved in
+	    its DB settings. This is the belt-and-braces override for the archaic-image problem. */
+	const STYLE_ENFORCER = ' IMPORTANT STYLE OVERRIDE: This must look like a premium 2020s brand photograph of modern, affluent, high-class urban Africa (contemporary Accra, Ghana). Bright, clean, luxurious, aspirational. Sleek modern architecture, glass and steel towers, floor-to-ceiling windows, polished interiors, current-generation slim devices (thin laptops, modern smartphones, large flat monitors), stylish well-dressed successful professionals, wealth and sophistication. Rich, vibrant, bright natural lighting. It must NOT look vintage, retro, aged, dim, poor, rural, or from any decade before 2015. Absolutely no CRT or boxy monitors, no old technology, no framed old maps of Africa, no cluttered paper-filled desks, no faded or sepia tones, no dim or gloomy rooms.';
+
 	/** Negative prompt: what the image model must NOT draw. Kills the tired rural /
-	    third-world Africa clichés at the model level (strongest lever). */
-	const NEGATIVE_PROMPT = 'mud brick, red clay bricks, unfinished brick walls, exposed cinder block, village, rural, slum, shanty, tin shack, thatch roof, dusty dirt road, unpaved road, roadside wooden market stall, poverty, run-down, dilapidated, derelict, shabby, dated 1990s look, old-fashioned, third-world stereotype, worn dirty clothing, gloomy, muddy, grey depressing mood, low quality, blurry, distorted, deformed, cartoon, illustration, oversaturated, text, watermark, logo';
+	    third-world / archaic Africa clichés at the model level (strongest lever). */
+	const NEGATIVE_PROMPT = 'CRT monitor, boxy old computer, vintage computer, old technology, retro electronics, typewriter, old telephone, paper stacks, cluttered desk, framed old map, Africa map on wall, faded photos, sepia tone, vintage, retro, 1970s, 1980s, 1990s, aged, antique, nostalgic, old man in dim office, elderly, poverty, mud brick, red clay bricks, unfinished brick walls, exposed cinder block, village, rural, slum, shanty, tin shack, thatch roof, dusty dirt road, unpaved road, roadside wooden market stall, run-down, dilapidated, derelict, shabby, dated look, old-fashioned, third-world stereotype, worn dirty clothing, dim lighting, dark room, gloomy, muddy, grey, dull, depressing mood, low quality, blurry, grainy, distorted, deformed, cartoon, illustration, oversaturated, text, watermark, logo';
 
 	/** Default template libraries (one default per library; more can be added in the UI). */
 	public static function default_templates() {
@@ -85,6 +90,9 @@ class ACG_Prompts {
 		foreach ( $vars as $key => $value ) {
 			$pairs[ '{' . $key . '}' ] = $value;
 		}
-		return strtr( (string) $template, $pairs );
+		$rendered = strtr( (string) $template, $pairs );
+		// Force-append the style enforcer so the modern look is guaranteed even when an
+		// install still has an older/weaker prompt saved in its DB settings.
+		return $rendered . self::STYLE_ENFORCER;
 	}
 }
